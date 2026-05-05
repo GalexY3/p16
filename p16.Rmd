@@ -1,0 +1,179 @@
+---
+title: "Práctica 16 — Regresión Lineal Múltiple"
+subtitle: "Data Science · Mayo 2026"
+author: "Alejandro Panera Pascual"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+    number_sections: true
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  message    = FALSE,
+  warning    = FALSE,
+  fig.align  = "center",
+  fig.width  = 8,
+  fig.height = 5
+)
+```
+
+---
+
+# Introducción
+
+En esta práctica se aplica una **regresión lineal múltiple** sobre los datos del estudio PISA 2022 (muestra española). El objetivo es analizar qué factores explican el rendimiento en matemáticas, tomando como predictores la puntuación en lectura, el género del alumno y el nivel educativo de los padres.
+
+La regresión lineal múltiple permite modelar la relación entre una variable dependiente cuantitativa ($Y$) y varios predictores ($X_1, X_2, \ldots, X_p$):
+
+$$Y = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \cdots + \beta_p X_p + \varepsilon$$
+
+---
+
+# Carga de datos
+
+```{r carga}
+library(haven)
+
+pisa <- read_sav("PISA22SP.sav")
+pisa <- na.omit(pisa)
+
+cat("Observaciones tras eliminar NAs:", nrow(pisa))
+```
+
+---
+
+# Exploración inicial
+
+Antes de modelar, examinamos las variables que entrarán en el análisis.
+
+```{r exploracion}
+summary(pisa[, c("mates", "lectu", "heduc", "genero")])
+```
+
+---
+
+# Preparación de variables
+
+```{r preparacion}
+pisa$genero <- as.factor(pisa$genero)
+levels(pisa$genero) <- c("mujer", "hombre")
+```
+
+Distribución de la variable dependiente (**matemáticas**):
+
+```{r hist-mates}
+hist(pisa$mates,
+     main  = "Distribución de la puntuación en matemáticas",
+     xlab  = "Puntuación",
+     col   = "#2980b9",
+     border = "white")
+```
+
+---
+
+# Regresión lineal simple
+
+Como punto de partida, estudiamos la relación entre lectura y matemáticas de forma aislada.
+
+```{r reg-simple}
+plot(pisa$lectu, pisa$mates,
+     main  = "Matemáticas vs. Lectura",
+     xlab  = "Puntuación en lectura",
+     ylab  = "Puntuación en matemáticas",
+     col   = rgb(0, 0, 1, 0.08),
+     pch   = 16)
+
+reg_simple <- lm(mates ~ lectu, data = pisa)
+abline(reg_simple, col = "red", lwd = 2)
+```
+
+```{r resumen-simple}
+summary(reg_simple)
+```
+
+**Interpretación:** El coeficiente de `lectu` (~0.66) indica que por cada punto adicional en lectura, la nota en matemáticas aumenta ~0.66 puntos. El R² ≈ 0.56 muestra que la lectura por sí sola explica el 56 % de la varianza en matemáticas.
+
+---
+
+# Regresión lineal múltiple
+
+Ampliamos el modelo incorporando el género y el nivel educativo de los padres (`heduc`) como predictores adicionales.
+
+```{r reg-multiple}
+reg_multiple <- lm(mates ~ genero + heduc + lectu, data = pisa)
+summary(reg_multiple)
+```
+
+**Interpretación de los coeficientes:**
+
+- **`genero` (hombre):** Los chicos obtienen ~30 puntos más que las chicas en matemáticas, controlando por el resto de variables.
+- **`heduc`:** Por cada nivel adicional de educación de los padres, la nota sube ~3 puntos.
+- **`lectu`:** Sigue siendo el predictor más potente (~0.67 por punto de lectura).
+
+El R² ≈ 0.60 supone una mejora respecto al modelo simple (0.56), lo que indica que género y educación familiar añaden capacidad explicativa.
+
+---
+
+# Evaluación del modelo
+
+```{r evaluacion}
+RSE   <- sqrt(sum(residuals(reg_multiple)^2) / reg_multiple$df.residual)
+R2    <- summary(reg_multiple)$r.squared
+R2adj <- summary(reg_multiple)$adj.r.squared
+
+data.frame(
+  Métrica    = c("RSE", "R²", "R² ajustado"),
+  Valor      = round(c(RSE, R2, R2adj), 4)
+)
+```
+
+- **RSE ≈ 51.7:** Las predicciones se desvían ~52 puntos de media, razonable en la escala PISA (0–1000).
+- **R² ≈ 0.60:** El modelo captura el 60 % de la variabilidad en matemáticas.
+- **R² ajustado ≈ 0.60:** Prácticamente idéntico al R², lo que indica que los tres predictores son relevantes y no hay sobreajuste.
+
+---
+
+# Diagnóstico de residuos
+
+```{r diagnostico, fig.height=7}
+par(mfrow = c(2, 2))
+plot(reg_multiple)
+par(mfrow = c(1, 1))
+```
+
+- **Residuals vs Fitted:** Comprueba linealidad y homocedasticidad.
+- **Q-Q plot:** Evalúa la normalidad de los residuos.
+- **Scale-Location:** Segunda comprobación de homocedasticidad.
+- **Residuals vs Leverage:** Detecta observaciones con alta influencia.
+
+---
+
+# Comprobación de multicolinealidad
+
+```{r multicolinealidad}
+library(car)
+vif(reg_multiple)
+```
+
+Todos los VIF son muy inferiores a 10, por lo que **no existe multicolinealidad problemática** entre los predictores.
+
+---
+
+# Conclusiones
+
+El modelo de regresión lineal múltiple muestra que:
+
+1. La **puntuación en lectura** es el predictor más potente del rendimiento en matemáticas (β ≈ 0.67, p < 0.001).
+2. El **género** tiene un efecto significativo: los chicos puntúan ~30 puntos más que las chicas en matemáticas, controlando por los demás factores.
+3. El **nivel educativo de los padres** contribuye positivamente (~3 puntos por nivel, p < 0.001).
+4. En conjunto, el modelo explica el **60 % de la varianza** (R² = 0.60), con un error típico de ~52 puntos sobre la escala PISA.
+5. Los diagnósticos no revelan problemas graves de multicolinealidad, aunque los gráficos de residuos sugieren ligera heterocedasticidad en los extremos de la distribución.
