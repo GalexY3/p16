@@ -1,0 +1,207 @@
+---
+title: "Práctica 17 — surCoin y evolMap"
+subtitle: "Data Science · Mayo 2026"
+author: "Alejandro Panera Pascual"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+    number_sections: true
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  message   = FALSE,
+  warning   = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+---
+
+# Introducción
+
+Esta práctica aplica dos técnicas de visualización avanzada sobre los datos PISA 2022 (muestra española):
+
+- **surCoin**: análisis de coincidencia entre variables categóricas, visualizado como un grafo interactivo.
+- **evolMap**: mapa interactivo con información geográfica de las regiones españolas.
+
+---
+
+# surCoin: análisis de coincidencia
+
+## ¿Qué es surCoin?
+
+`surCoin()` es una función del paquete `netCoin` que detecta qué categorías de distintas variables aparecen juntas más de lo que cabría esperar por azar. El resultado es un **grafo interactivo**: los nodos son categorías y los enlaces representan asociaciones estadísticamente significativas (evaluadas mediante el estadístico Z de Haberman).
+
+## Carga de datos y librerías
+
+```{r librerias-surcoin}
+library(haven)
+library(netCoin)
+
+pisa <- read_sav("PISA22SP.sav")
+pisa <- na.omit(pisa)
+```
+
+## Preparación de variables categóricas
+
+`surCoin` trabaja exclusivamente con variables categóricas. Las variables continuas de PISA (mates, lectu, cienc) hay que convertirlas en tramos. Usamos `cut()` para crear intervalos con etiquetas interpretables.
+
+```{r preparacion-surcoin}
+# Género
+pisa$genero <- factor(pisa$genero, labels = c("Mujer", "Hombre"))
+
+# Rendimiento en matemáticas en 4 niveles según cuartiles
+pisa$mates_cat <- cut(pisa$mates,
+                      breaks = quantile(pisa$mates, probs = c(0, .25, .5, .75, 1)),
+                      labels = c("Bajo", "Medio-bajo", "Medio-alto", "Alto"),
+                      include.lowest = TRUE)
+
+# Educación de los padres en 3 niveles
+pisa$heduc_cat <- cut(pisa$heduc,
+                      breaks = c(0, 4, 7, 10),
+                      labels = c("Baja", "Media", "Alta"),
+                      include.lowest = TRUE)
+
+# Estatus socioeconómico en 3 niveles
+pisa$status_cat <- cut(pisa$status,
+                       breaks = 3,
+                       labels = c("Bajo", "Medio", "Alto"))
+```
+
+**¿Por qué estos cortes?**
+Para `mates_cat` usamos los cuartiles reales del dataset, de modo que cada nivel tiene aproximadamente el mismo número de alumnos. Para `heduc_cat` y `status_cat` usamos tramos que tienen sentido sustantivo (nivel de estudios bajo / medio / universitario).
+
+## Análisis surCoin
+
+```{r surcoin, eval=FALSE}
+# Seleccionamos las variables a analizar
+variables <- c("genero", "mates_cat", "heduc_cat", "status_cat")
+
+# surCoin calcula las co-ocurrencias y su significación estadística
+resultado <- surCoin(pisa, variables = variables)
+
+# plot() genera un HTML interactivo y lo abre en el navegador
+plot(resultado)
+```
+
+> **Nota**: el gráfico interactivo se abre en el navegador al ejecutar `plot()`. No se incrusta en este HTML porque requiere un servidor local, pero puedes ejecutarlo directamente en RStudio.
+
+## Interpretación
+
+El grafo resultante muestra:
+
+- **Nodos grandes**: categorías con más casos (ej. "Medio-alto" en matemáticas).
+- **Nodos cercanos y enlazados**: categorías que tienden a aparecer juntas (ej. "Hombre" — "Alto" en matemáticas — "Alta" educación parental).
+- **Ausencia de enlace**: la co-ocurrencia no es mayor que la esperada por azar.
+
+Esto permite identificar de un vistazo qué perfiles de estudiante se asocian con alto o bajo rendimiento.
+
+---
+
+# evolMap: mapa interactivo de regiones
+
+## ¿Qué es evolMap?
+
+`evolMap` genera **mapas HTML interactivos** a partir de datos geoespaciales (formato `sf` o GeoJSON). Permite representar información sobre territorios y, opcionalmente, animar su evolución temporal.
+
+En esta práctica lo usamos para visualizar el **rendimiento medio en matemáticas por comunidad autónoma** en la muestra PISA 2022.
+
+## Librerías necesarias
+
+```{r librerias-evolmap}
+library(evolMap)
+library(sf)
+library(dplyr)
+```
+
+## Preparación de los datos PISA por región
+
+Calculamos la nota media en matemáticas para cada código de región presente en PISA.
+
+```{r datos-region}
+# Media de matemáticas por región (código numérico en PISA)
+pisa_region <- pisa %>%
+  group_by(region) %>%
+  summarise(
+    media_mates = round(mean(mates, na.rm = TRUE), 1),
+    media_lectu = round(mean(lectu, na.rm = TRUE), 1),
+    n           = n()
+  )
+
+pisa_region
+```
+
+## Carga del mapa de España por comunidades autónomas
+
+Usamos un GeoJSON público de las comunidades autónomas españolas. Cada comunidad tiene un código (`cod_ccaa`) que relacionamos con los códigos de región de PISA.
+
+```{r geodatos, eval=FALSE}
+# GeoJSON de comunidades autónomas de España (fuente: IGN / CartoCiudad)
+ccaa <- st_read("https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/spain-communities.geojson")
+
+# Exploramos qué columnas tiene para hacer el join
+names(ccaa)
+head(ccaa)
+```
+
+## Unión de datos geográficos y PISA
+
+```{r join, eval=FALSE}
+# Los códigos de región en PISA van del 1 al 19 (una por comunidad autónoma)
+# Añadimos la información de rendimiento al objeto espacial
+ccaa_pisa <- ccaa %>%
+  left_join(pisa_region, by = c("cartodb_id" = "region"))
+
+# Creamos un tooltip con la información que aparecerá al hacer clic
+ccaa_pisa$info <- paste0(
+  "<b>", ccaa_pisa$name, "</b><br>",
+  "Media matemáticas: ", ccaa_pisa$media_mates, "<br>",
+  "Media lectura: ", ccaa_pisa$media_lectu, "<br>",
+  "N alumnos: ", ccaa_pisa$n
+)
+```
+
+## Generación del mapa
+
+```{r evolmap, eval=FALSE}
+# Creamos el mapa centrado en España
+mapa <- create_map(center = c(40.4, -3.7), zoom = 5)
+
+# Añadimos las comunidades autónomas con su información
+mapa <- add_entities(mapa, ccaa_pisa, info = "info")
+
+# Generamos el HTML interactivo en una carpeta local
+plot(mapa, directory = "mapa_pisa")
+```
+
+> **Nota**: el mapa se exporta como HTML en la carpeta `mapa_pisa/` dentro del directorio del proyecto. Ábrelo con cualquier navegador.
+
+## Interpretación
+
+El mapa resultante permite:
+
+- Ver de un vistazo las **diferencias regionales** en rendimiento PISA dentro de España.
+- Al hacer clic en cada comunidad, aparece el tooltip con la media de matemáticas, lectura y el número de alumnos de la muestra.
+- Identificar si el rendimiento sigue patrones geográficos (norte/sur, interior/costa, etc.).
+
+---
+
+# Conclusiones
+
+| Técnica | Para qué sirve | Output |
+|---------|---------------|--------|
+| **surCoin** | Detectar asociaciones entre categorías de distintas variables | Grafo interactivo HTML |
+| **evolMap** | Visualizar datos sobre un mapa geográfico interactivo | Mapa HTML exportable |
+
+Ambas técnicas son especialmente útiles para **comunicar resultados** de forma visual e interactiva, más allá de las tablas y gráficos estáticos habituales.
